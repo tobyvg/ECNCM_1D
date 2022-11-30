@@ -224,7 +224,7 @@ function skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,constraints,dissipation,pad
     du = pad2[conv_pad_size + 1:end - conv_pad_size,:]
     pad1 = padding(u,conv_pad_size,as,bs)
     #pad2 = padding(du,conv_pad_size)
-    pad3 = padding(s,conv_pad_size,0*as,0*bs,anti_symm_outflow = true)
+    pad3 = padding(s,conv_pad_size,as,bs,anti_symm_outflow = true)
 
 
 
@@ -445,7 +445,7 @@ end
 
 
 
-function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false)
+function padding(vec,pad_size,a = NaN, b = NaN;anti_symm_outflow = false)
 
     if length(size(vec)) == 1
         vec = reshape(vec,(size(vec)[1],1))
@@ -455,49 +455,44 @@ function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false)
 
     @assert pad_size <= l "Padding larger than vector, structure not preserved => lower your cumulative\nfilter widths (stencil + convolutional + diagonal) from " * string(pad_size) * " to less than " * string(length)
 
-    #treated_size = pad_size
 
+    front = stop_gradient() do
+        Array{Float64}(undef, pad_size,0)
+    end
+    back = stop_gradient() do
+        Array{Float64}(undef, pad_size,0)
+    end
 
-
-    if a ==0 || b ==0
-        front = stop_gradient() do
-            Array{Float64}(undef, 0,size(vec)[2])
-        end
-        back = stop_gradient() do
-            Array{Float64}(undef, 0,size(vec)[2])
-        end
-        step = minimum([pad_size,l])
-        front = [vec[end-pad_size+1:end,:];front]
-        back = [vec[1:pad_size,:];back]
-    else
-        front = stop_gradient() do
-            Array{Float64}(undef, pad_size,0)
-        end
-        back = stop_gradient() do
-            Array{Float64}(undef, pad_size,0)
-        end
-
-        for i in 1:size(vec)[2]
-            if isnan(a[i]) && isnan(b[i])
-                front = [ front vec[end-pad_size+1:end,i]]
-                back = [ back vec[1:pad_size,i]]
-            elseif isnan(a[i]) && isnan(b[i]) == false
-                if anti_symm_outflow
-                    front = [ front -reverse(vec[1:pad_size,i])]
-                else
-                    front = [ front reverse(vec[1:pad_size,i])]
-                end
-                back = [ back b[i]*vec[1:pad_size,i].^0]
-            elseif isnan(b[i]) && isnan(a[i]) == false
-                front = [ front a[i]*vec[end-pad_size+1:end,i].^0]
-                if anti_symm_outflow
-                    back = [ back -reverse(vec[end-pad_size+1:end,i])]
-                else
-                    back = [ back reverse(vec[end-pad_size+1:end,i])]
-                end
+    for i in 1:size(vec)[2]
+        if isnan(a[i]) && isnan(b[i])
+            front = [ front vec[end-pad_size+1:end,i]]
+            back = [ back vec[1:pad_size,i]]
+        elseif isnan(a[i]) && isnan(b[i]) == false
+            if anti_symm_outflow
+                back = [ back reverse(vec[end-pad_size+1:end,i])]
+                front = [ front -reverse(vec[1:pad_size,i])]
             else
-                front = [ front a[i]*vec[end-pad_size+1:end,i].^0]
-                back = [ back b[i]*vec[1:pad_size,i].^0]
+                back = [ back (2*vec[end,i] .- 2*(vec[end,i]-b[i]) .- reverse(vec[end-pad_size+1:end,i]))]
+                front = [ front reverse(vec[1:pad_size,i])]
+            end
+        elseif isnan(b[i]) && isnan(a[i]) == false
+            #front = [ front a[i]*vec[end-pad_size+1:end,i].^0]
+            if anti_symm_outflow
+                back = [ back -reverse(vec[end-pad_size+1:end,i])]
+                front = [ front reverse(vec[1:pad_size,i])]
+            else
+                back = [ back reverse(vec[end-pad_size+1:end,i])]
+                front = [ front ((2*vec[1,i]) .-2*(vec[1,i]-a[i]) .-reverse(vec[1:pad_size,i]))]
+            end
+        else
+            #front = [ front a[i]*vec[end-pad_size+1:end,i].^0]
+            #back = [ back b[i]*vec[1:pad_size,i].^0]
+            if anti_symm_outflow
+                back = [ back reverse(vec[end-pad_size+1:end,i])]
+                front = [ front reverse(vec[1:pad_size,i])]
+            else
+                back = [ back (2*vec[end,i] .- 2*(vec[end,i]-b[i]) .- reverse(vec[end-pad_size+1:end,i]))]
+                front = [ front ((2*vec[1,i]) .-2*(vec[1,i]-a[i]) .-reverse(vec[1:pad_size,i]))]
             end
         end
     end
