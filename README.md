@@ -1,4 +1,4 @@
-# ECNCM_1D
+# Energy conserving neural closure models 
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://tobyvg.github.io/ECNCM_1D.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://tobyvg.github.io/ECNCM_1D.jl/dev/)
