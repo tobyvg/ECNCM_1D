@@ -36,7 +36,7 @@ function gen_D3(x)
 end
 
 
-function generate_domain_and_filters(b,I,N)
+function generate_domain_and_filters(b,I,N;spectral = false)
     J = round(Int,floor(N/I))
 
     a = 0
@@ -75,10 +75,45 @@ function generate_domain_and_filters(b,I,N)
     INTEG(a) = IP(a,ones(size(a)))
     integ(a) = ip(a,ones(size(a)))
     ref_integ(a) = ref_ip(a,ones(size(a)))
-
-    return b,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(gen_W(mapper),gen_R(mapper)),(IP,ip,ref_ip),(INTEG,integ,ref_integ)
+    if spectral
+        W, R = spectral_filter(X,x,domain_range)
+    else
+        W, R = gen_W(mapper),gen_R(mapper)
+    end
+    domain_descriptors = b,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ)
+    return domain_descriptors
 end
 
+function fourier_basis(x,domain_range)
+    N = size(x)[1]
+    basis = Array{Float64}(undef,  N,0)
+    for k in 1:floor(Int,N/2)
+        basis_cos = cos.((k-1)*2*pi * x/domain_range)
+        basis = [basis;;basis_cos/sqrt(basis_cos'*basis_cos)]
+        basis_sin = sin.(k*2*pi * x/domain_range)
+        basis = [basis;;basis_sin/sqrt(basis_sin'*basis_sin)]
+    end
+    if N % 2 == 1
+        basis_cos = cos.((floor(Int,N/2) )*2*pi*x/domain_range)
+        basis = [basis;;basis_cos /sqrt(basis_cos'*basis_cos)]
+    end
+    return basis
+end
+
+function spectral_filter(X,x,domain_range)
+    basis = fourier_basis(x,domain_range)
+    basis_bar = fourier_basis(X,domain_range)
+    spectral_filter = spzeros(size(X)[1],size(x)[1])
+
+    for i in 1:size(X)[1]
+        spectral_filter[i,i] = 1
+    end
+
+    ratio = sqrt(size(X)[1]/size(x)[1])
+    W = ratio*basis_bar*spectral_filter*basis'
+    R = 1/ratio*basis*spectral_filter'*basis_bar'
+    return W,R
+end
 
 
 function gen_W(mapper)
@@ -105,6 +140,8 @@ function gen_R(mapper)
     end
     return mat
 end
+
+
 
 
 
