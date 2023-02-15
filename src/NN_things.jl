@@ -445,8 +445,14 @@ end
 
 
 
-function padding(vec,pad_size,a = NaN, b = NaN;anti_symm_outflow = false)
+function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false)
 
+    if a == 0 || b == 0
+
+        a,b = stop_gradient() do
+            NaN * ones(size(vec)[2]),NaN * ones(size(vec)[2])
+        end
+    end
     if length(size(vec)) == 1
         vec = reshape(vec,(size(vec)[1],1))
     end
