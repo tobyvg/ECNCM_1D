@@ -87,31 +87,22 @@ function new_diss_form(stencil_i,p_i,p_j,stencil_j,u,diagonals)
     return -sp_mat_mul(res[diagonals + 1:end-diagonals,:],reverse(stencil_i))
 end
 
-function constr_layer(stencil1,diagonal_vec,stencil2,u,diagonals,diss = false)
+function constr_layer(stencil1,diagonal_vec,stencil2,u,diagonals)
 
     mult = sp_mat_mul(u,stencil2)
 
     res = stop_gradient() do
         zeros(size(diagonal_vec[1]))
     end
-    if diss
-        int_res = stop_gradient() do
-           zeros(size(diagonal_vec[1]))
-        end
-        for i in 0:diagonals
-            int_res = int_res .+ diagonal_vec[i+1] .* circshift(mult,i - diagonals)
-        end
-        for i in 0:diagonals
-            res = res .+ circshift(reverse(diagonal_vec)[1+i+diagonals],i) .* circshift(int_res,i)
-        end
-    else
-        for i in 0:diagonals
-            res = res .+ diagonal_vec[i+1] .* circshift(mult,i - diagonals)
-        end
-        for i in 1:diagonals
-            res = res .+ circshift(diagonal_vec[1+i+diagonals],i) .* circshift(mult,i)
-        end
+
+
+    for i in 0:diagonals
+        res = res .+ diagonal_vec[i+1] .* circshift(mult,i - diagonals)
     end
+    for i in 1:diagonals
+        res = res .+ circshift(diagonal_vec[1+i+diagonals],i) .* circshift(mult,i)
+    end
+
 
 
     return sp_mat_mul(res[diagonals + 1:end-diagonals,:],stencil1)
@@ -169,23 +160,23 @@ function gen_model(f,constraints,supply_s,dissipation,NN_descriptors;stencils = 
     if stencils == 0
 
 
-        M11 = init_stencil(stencil_width)
-        M12 = init_stencil(stencil_width)
+        B11 = init_stencil(stencil_width)
+        B12 = init_stencil(stencil_width)
 
-        M21 = init_stencil(stencil_width)
-        M22 = init_stencil(stencil_width)
+        B21 = init_stencil(stencil_width)
+        B22 = init_stencil(stencil_width)
 
-        M31 = init_stencil(stencil_width)
-        M32 = init_stencil(stencil_width)
+        B31 = init_stencil(stencil_width)
+        B32 = init_stencil(stencil_width)
 
 
-        M1 = init_stencil(stencil_width)
-        M2 = init_stencil(stencil_width)
+        B1 = init_stencil(stencil_width)
+        B2 = init_stencil(stencil_width)
 
-        M3 = init_stencil(stencil_width)
-        M4 = init_stencil(stencil_width)
+        B3 = init_stencil(stencil_width)
+        B4 = init_stencil(stencil_width)
 
-        stencils = (M11,M12,M21,M22,M31,M32,M1,M2,M3,M4)
+        stencils = (B11,B12,B21,B22,B31,B32,B1,B2,B3,B4) ## 6 B matrices for K, 4 B matrices for Q
     end
 
 
@@ -241,14 +232,14 @@ function skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,constraints,dissipation,pad
 
 
     if constraints
-        (M11,M12,M21,M22,M31,M32,M1,M2,M3,M4) = stencils
+        (B11,B12,B21,B22,B31,B32,B1,B2,B3,B4) = stencils
 
 
-        M11_bar = enforce_momentum_conservation(M11)
-        M12_bar = enforce_momentum_conservation(M12)
-        M31_bar = enforce_momentum_conservation(M31)
-        M1_bar = enforce_momentum_conservation(M1)
-        M3_bar = enforce_momentum_conservation(M3)
+        B11_bar = enforce_momentum_conservation(B11)
+        B12_bar = enforce_momentum_conservation(B12)
+        B31_bar = enforce_momentum_conservation(B31)
+        B1_bar = enforce_momentum_conservation(B1)
+        B3_bar = enforce_momentum_conservation(B3)
 
 
         pad_u = padding(u,2*stencil_width + diagonals,as,bs)
@@ -263,13 +254,13 @@ function skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,constraints,dissipation,pad
         Phi2 = Tuple(p[:,i,:] for i in select_vec .+ add)
         Phi3 =  Tuple(p[:,i,:] for i in select_vec .+ 2*add)
 
-        cons_u = skew_symm_form(M11_bar,Phi1,M12_bar,pad_u,diagonals)
+        cons_u = skew_symm_form(B11_bar,Phi1,B12_bar,pad_u,diagonals)
 
-        cons_s = skew_symm_form(M21,Phi2,M22,pad_s,diagonals)
+        cons_s = skew_symm_form(B21,Phi2,B22,pad_s,diagonals)
 
 
-        ex_u = exchange_form(M31_bar,Phi3,M32,pad_s,diagonals)
-        ex_s = -exchange_form(reverse(M32),reverse(Phi3),reverse(M31_bar),pad_u,diagonals)
+        ex_u = exchange_form(B31_bar,Phi3,B32,pad_s,diagonals)
+        ex_s = -exchange_form(reverse(B32),reverse(Phi3),reverse(B31_bar),pad_u,diagonals)
 
 
         pu = cons_u  .+ ex_u
@@ -286,11 +277,11 @@ function skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,constraints,dissipation,pad
             Psi3 = Tuple(p[:,i,:] for i in select_vec[1:end-diagonals] .+ 5*add .- 2*diagonals)
             Psi4 = Tuple(p[:,i,:] for i in select_vec[1:end-diagonals] .+ 6*add .- 3*diagonals)
 
-            #diss_u = diss_form(M41_bar,p1,pad_u,diagonals)
-            #diss_s = diss_form(M51,p2,pad_s,diagonals)
+            #diss_u = diss_form(B41_bar,p1,pad_u,diagonals)
+            #diss_s = diss_form(B51,p2,pad_s,diagonals)
 
-            diss_u = new_diss_form(M1_bar,Psi1,Psi1,M1_bar,pad_u,diagonals) .+ new_diss_form(M3_bar,Psi3,Psi3,M3_bar,pad_u,diagonals) .+ new_diss_form(M1_bar,Psi1,Psi2,M2,pad_s,diagonals) .+ new_diss_form(M3_bar,Psi3,Psi4,M4,pad_s,diagonals)
-            diss_s = new_diss_form(M2,Psi2,Psi1,M1_bar,pad_u,diagonals)  .+ new_diss_form(M4,Psi4,Psi3,M3_bar,pad_u,diagonals) .+  new_diss_form(M2,Psi2,Psi2,M2,pad_s,diagonals) .+ new_diss_form(M4,Psi4,Psi4,M4,pad_s,diagonals)
+            diss_u = new_diss_form(B1_bar,Psi1,Psi1,B1_bar,pad_u,diagonals) .+ new_diss_form(B3_bar,Psi3,Psi3,B3_bar,pad_u,diagonals) .+ new_diss_form(B1_bar,Psi1,Psi2,B2,pad_s,diagonals) .+ new_diss_form(B3_bar,Psi3,Psi4,B4,pad_s,diagonals)
+            diss_s = new_diss_form(B2,Psi2,Psi1,B1_bar,pad_u,diagonals)  .+ new_diss_form(B4,Psi4,Psi3,B3_bar,pad_u,diagonals) .+  new_diss_form(B2,Psi2,Psi2,B2,pad_s,diagonals) .+ new_diss_form(B4,Psi4,Psi4,B4,pad_s,diagonals)
 
             pu = pu .+ diss_u
             ps = ps .+ diss_s
