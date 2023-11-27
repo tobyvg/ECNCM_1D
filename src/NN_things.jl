@@ -10,314 +10,10 @@ stop_gradient(f) = f()
 Zygote.@nograd stop_gradient
 
 
-function enforce_momentum_conservation(stencil,symm = "none",mom_cons = true)
-    stencil_neighbors = round(Int,(size(stencil)[1]-1)/2)
-    if symm == "skew-symm"
-        bar = [[stencil[i] for i in 1:stencil_neighbors];[0];reverse([-stencil[i] for i in 1:stencil_neighbors])]
-    elseif symm == "symm"
-        bar = [[stencil[i] for i in 1:(stencil_neighbors+1)];reverse([stencil[i] for i in 1:stencil_neighbors])]
-        if mom_cons
-            bar = bar .- mean(bar)
-        end
-    else
-        if mom_cons
-            bar = stencil .- mean(stencil)
-        else
-            bar = stencil
-        end
-    end
-    return bar
-end
 
 
 
 
-
-function gen_select_mat(x,neighbors,reduction_fold = 1)
-    J = size(x)[1]
-    K = reduction_fold*(2*neighbors + 1)
-    mat = zeros(Int,(J,K))
-    for j in 1:J
-        for k in -neighbors:neighbors
-            for l in 1:reduction_fold
-                mat[j,reduction_fold*(k + neighbors) + 1 + (l-1)] = index_converter(reduction_fold*(j+k) +(l-reduction_fold),reduction_fold*J)
-            end
-        end
-    end
-    return mat'
-end
-
-function sp_mat_mul(quantity,stencil)
-    stencil_width = Int((size(stencil)[1] - 1)/2)
-    select_mat = stop_gradient() do
-        gen_select_mat(quantity,stencil_width)[:,stencil_width + 1: end - stencil_width]
-    end
-    return vcat([stencil' * quantity[select_mat[:,i],:] for i in 1:size(select_mat)[2]]...)
-end
-
-
-
-
-
-
-
-function init_stencil(stencil_width,coeff = 0.4)
-    stencil = exp.(-coeff*collect(-stencil_width:stencil_width).^2).*(-ones(2*stencil_width + 1)).^collect(1:2*stencil_width + 1)
-    return stencil .* sign.(rand(Uniform(-1,1)))
-end
-
-
-function new_diss_form(stencil_i,p_i,p_j,stencil_j,u,diagonals)
-    mult = sp_mat_mul(u,stencil_j)
-
-    res = stop_gradient() do
-        zeros(size(p_j[1]))
-    end
-
-    int_res = stop_gradient() do
-       zeros(size(p_j[1]))
-    end
-    for i in 0:diagonals
-        int_res = int_res .+ p_j[i+1] .* circshift(mult,i - diagonals)
-    end
-    for i in 0:diagonals
-        res = res .+ circshift(reverse(p_i)[1+i],i) .* circshift(int_res,i)
-    end
-
-    return -sp_mat_mul(res[diagonals + 1:end-diagonals,:],reverse(stencil_i))
-end
-
-function constr_layer(stencil1,diagonal_vec,stencil2,u,diagonals)
-
-    mult = sp_mat_mul(u,stencil2)
-
-    res = stop_gradient() do
-        zeros(size(diagonal_vec[1]))
-    end
-
-
-    for i in 0:diagonals
-        res = res .+ diagonal_vec[i+1] .* circshift(mult,i - diagonals)
-    end
-    for i in 1:diagonals
-        res = res .+ circshift(diagonal_vec[1+i+diagonals],i) .* circshift(mult,i)
-    end
-
-
-
-    return sp_mat_mul(res[diagonals + 1:end-diagonals,:],stencil1)
-end
-
-function skew_symm_form(stencil1,Phi,stencil2,u,diagonals)
-
-
-    cons_1 = constr_layer(stencil1,Phi,stencil2,u,diagonals)
-    cons_2 = constr_layer(reverse(stencil2),reverse(Phi),reverse(stencil1),u,diagonals)
-    cons = cons_1 .- cons_2
-    return cons
-end
-
-
-
-function exchange_form(stencil1,Phi,stencil2,u,diagonals)
-    ex = constr_layer(stencil1,Phi,stencil2,u,diagonals)
-    return ex
-end
-
-function gen_model(f,constraints,supply_s,dissipation,NN_descriptors;stencils = 0)
-
-    if constraints
-        @assert constraints == supply_s  "If you use constraints you need to supply the SGS variables"
-    end
-
-
-    (stencil_width,kernel_widths,channels,diagonals) = NN_descriptors
-
-    @assert size(kernel_widths)[1] == size(channels)[1] + 1 "Supply n kernel_widths and n-1 channels"
-
-    if stencils != 0
-        stencil_width = Int((size(stencils[1])[1]-1)/2)
-    end
-
-    physics_width = Int((20-size(f(ones(20),ones(20),0))[1])/2)
-    kernel_widths = [kernel_widths;]
-
-    if constraints
-        if dissipation
-            #channels = [[3]; channels; [2*diagonals*3 + 2*diagonals + 5]]
-            channels = [[3]; channels; [2*diagonals*3 + 4*diagonals + 7]]
-        else
-            channels = [[3]; channels; [2*diagonals*3  + 3]]
-        end
-    else
-        channels = [[3]; channels; [2]]
-    end
-
-    conv = conv_NN(2*kernel_widths .+ 1,channels,0)
-
-    conv_pad_size = sum(kernel_widths)
-
-    if stencils == 0
-
-
-        B11 = init_stencil(stencil_width)
-        B12 = init_stencil(stencil_width)
-
-        B21 = init_stencil(stencil_width)
-        B22 = init_stencil(stencil_width)
-
-        B31 = init_stencil(stencil_width)
-        B32 = init_stencil(stencil_width)
-
-
-        B1 = init_stencil(stencil_width)
-        B2 = init_stencil(stencil_width)
-
-        B3 = init_stencil(stencil_width)
-        B4 = init_stencil(stencil_width)
-
-        stencils = (B11,B12,B21,B22,B31,B32,B1,B2,B3,B4) ## 6 B matrices for K, 4 B matrices for Q
-    end
-
-
-
-
-    BC_f = padding_wrapper(f)
-
-
-
-    model(u,s,x,as = 0,bs = 0,stencils = stencils,BC_f = BC_f,conv = conv,constraints = constraints,dissipation = dissipation,pad_sizes = (physics_width,stencil_width,conv_pad_size),supply_s = supply_s,diagonals = diagonals;channel = "all") = skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,constraints,dissipation,pad_sizes,supply_s,diagonals;channel)
-
-    return model, (conv,stencils)
-
-end
-
-
-function skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,constraints,dissipation,pad_sizes,supply_s,diagonals;channel)
-
-    #domain_range,(I,J),(X,x),(Omega,omega),(W,R),(IP,ip),(INTEG,integ) = domain_descriptors
-
-
-    (physics_width,stencil_width,conv_pad_size) = pad_sizes
-
-    if constraints
-        conv_pad_size = conv_pad_size + stencil_width + diagonals
-    else
-        conv_pad_size += 1
-    end
-
-
-
-
-
-    pad2 = BC_f(u,x,0,as = as,bs = bs,eval_BCs = false,pad_size = conv_pad_size + physics_width)
-
-    du = pad2[conv_pad_size + 1:end - conv_pad_size,:]
-    pad1 = padding(u,conv_pad_size,as,bs)
-    #pad2 = padding(du,conv_pad_size)
-    pad3 = padding(s,conv_pad_size,as,bs,anti_symm_outflow = true)
-
-
-
-    if supply_s
-        pads = [pad1;pad2;pad3]
-    else
-        pads = [pad1;pad2; 0 .* pad3]
-    end
-
-    pads = reshape(pads,(size(pad1)[1],3,size(pad1)[2]))
-
-
-    p = conv(pads)
-
-
-    if constraints
-        (B11,B12,B21,B22,B31,B32,B1,B2,B3,B4) = stencils
-
-
-        B11_bar = enforce_momentum_conservation(B11)
-        B12_bar = enforce_momentum_conservation(B12)
-        B31_bar = enforce_momentum_conservation(B31)
-        B1_bar = enforce_momentum_conservation(B1)
-        B3_bar = enforce_momentum_conservation(B3)
-
-
-        pad_u = padding(u,2*stencil_width + diagonals,as,bs)
-        pad_s = padding(s,2*stencil_width + diagonals,0*as,0*bs,anti_symm_outflow = true)
-
-
-        add = 1+2*diagonals
-
-        select_vec = collect(1:add)
-
-        Phi1 = Tuple(p[:,i,:] for i in select_vec)
-        Phi2 = Tuple(p[:,i,:] for i in select_vec .+ add)
-        Phi3 =  Tuple(p[:,i,:] for i in select_vec .+ 2*add)
-
-        cons_u = skew_symm_form(B11_bar,Phi1,B12_bar,pad_u,diagonals)
-
-        cons_s = skew_symm_form(B21,Phi2,B22,pad_s,diagonals)
-
-
-        ex_u = exchange_form(B31_bar,Phi3,B32,pad_s,diagonals)
-        ex_s = -exchange_form(reverse(B32),reverse(Phi3),reverse(B31_bar),pad_u,diagonals)
-
-
-        pu = cons_u  .+ ex_u
-        ps = cons_s .+ ex_s
-
-
-
-        if dissipation
-
-            Psi1 = Tuple(p[:,i,:] for i in select_vec[1:end-diagonals] .+ 3*add)
-
-            Psi2 = Tuple(p[:,i,:] for i in select_vec[1:end-diagonals] .+ 4*add .- 1*diagonals)
-
-            Psi3 = Tuple(p[:,i,:] for i in select_vec[1:end-diagonals] .+ 5*add .- 2*diagonals)
-            Psi4 = Tuple(p[:,i,:] for i in select_vec[1:end-diagonals] .+ 6*add .- 3*diagonals)
-
-            #diss_u = diss_form(B41_bar,p1,pad_u,diagonals)
-            #diss_s = diss_form(B51,p2,pad_s,diagonals)
-
-            diss_u = new_diss_form(B1_bar,Psi1,Psi1,B1_bar,pad_u,diagonals) .+ new_diss_form(B3_bar,Psi3,Psi3,B3_bar,pad_u,diagonals) .+ new_diss_form(B1_bar,Psi1,Psi2,B2,pad_s,diagonals) .+ new_diss_form(B3_bar,Psi3,Psi4,B4,pad_s,diagonals)
-            diss_s = new_diss_form(B2,Psi2,Psi1,B1_bar,pad_u,diagonals)  .+ new_diss_form(B4,Psi4,Psi3,B3_bar,pad_u,diagonals) .+  new_diss_form(B2,Psi2,Psi2,B2,pad_s,diagonals) .+ new_diss_form(B4,Psi4,Psi4,B4,pad_s,diagonals)
-
-            pu = pu .+ diss_u
-            ps = ps .+ diss_s
-        else
-            diss_u = 0*u
-            diss_s = 0*u
-        end
-
-    else
-        pu = 1/(x[2]-x[1]).*sp_mat_mul(p[:,1,:],[0,-1,1])
-        if supply_s
-            ps = p[:,2,:][2:end-1,:]
-        else
-            ps = 0*pu
-        end
-    end
-
-
-
-    pu = pu .+ du
-    if channel == "all"
-        return pu,ps
-    elseif channel == "conservative"
-        return cons_u,cons_s
-    elseif channel == "dissipative"
-        return diss_u,diss_s
-    elseif channel == "exchange"
-        return ex_u,ex_s
-    elseif channel == "physics"
-        return du,0*du
-    elseif channel == "closure"
-        return pu .- du,ps
-    else
-        return 0*pu,0*ps
-    end
-end
 
 
 
@@ -436,7 +132,8 @@ end
 
 
 
-function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false)
+function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false, SGS_corrector = -1)
+
 
     if a == 0 || b == 0
 
@@ -466,8 +163,8 @@ function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false)
             back = [ back vec[1:pad_size,i]]
         elseif isnan(a[i]) && isnan(b[i]) == false
             if anti_symm_outflow
-                back = [ back reverse(vec[end-pad_size+1:end,i])]
-                front = [ front -reverse(vec[1:pad_size,i])]
+                back = [ back -SGS_corrector * reverse(vec[end-pad_size+1:end,i])]
+                front = [ front SGS_corrector * everse(vec[1:pad_size,i])]
             else
                 back = [ back (2*vec[end,i] .- 2*(vec[end,i]-b[i]) .- reverse(vec[end-pad_size+1:end,i]))]
                 front = [ front reverse(vec[1:pad_size,i])]
@@ -475,8 +172,8 @@ function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false)
         elseif isnan(b[i]) && isnan(a[i]) == false
             #front = [ front a[i]*vec[end-pad_size+1:end,i].^0]
             if anti_symm_outflow
-                back = [ back -reverse(vec[end-pad_size+1:end,i])]
-                front = [ front reverse(vec[1:pad_size,i])]
+                back = [ back SGS_corrector * reverse(vec[end-pad_size+1:end,i])]
+                front = [ front -SGS_corrector*reverse(vec[1:pad_size,i])]
             else
                 back = [ back reverse(vec[end-pad_size+1:end,i])]
                 front = [ front ((2*vec[1,i]) .-2*(vec[1,i]-a[i]) .-reverse(vec[1:pad_size,i]))]
@@ -485,8 +182,8 @@ function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false)
             #front = [ front a[i]*vec[end-pad_size+1:end,i].^0]
             #back = [ back b[i]*vec[1:pad_size,i].^0]
             if anti_symm_outflow
-                back = [ back reverse(vec[end-pad_size+1:end,i])]
-                front = [ front reverse(vec[1:pad_size,i])]
+                back = [ back -SGS_corrector*reverse(vec[end-pad_size+1:end,i])]
+                front = [ front -SGS_corrector*reverse(vec[1:pad_size,i])]
             else
                 back = [ back (2*vec[end,i] .- 2*(vec[end,i]-b[i]) .- reverse(vec[end-pad_size+1:end,i]))]
                 front = [ front ((2*vec[1,i]) .-2*(vec[1,i]-a[i]) .-reverse(vec[1:pad_size,i]))]
@@ -716,15 +413,264 @@ end
 
 function import_model(path,f)
     path = process_path(path)
+
+    t_stencil = load(path * "T.jld")["t_stencil"]
+
     constraints,supply_s,dissipation,NN_descriptors,stencils,weight_bias = (load(path * "model.jld")[i] for i in ("constraints","supply_s","dissipation","NN_descriptors","stencils","weight_bias"))
-    model, (conv,stencils) = gen_model(f, constraints,supply_s,dissipation,NN_descriptors,stencils = stencils)
+    model, (conv,stencils) = gen_model(f, constraints,supply_s,dissipation,NN_descriptors,t_stencil,stencils = stencils)
 
     for i in 1:length(conv)
         conv[i].weight[:,:,:] = weight_bias[i][1]
         conv[i].bias[:] = weight_bias[i][2]
     end
 
-    t_stencil = load(path * "T.jld")["t_stencil"]
+
 
     return model, (conv,stencils), t_stencil
+end
+
+
+
+
+using NNlib
+
+
+
+function gen_model(f,constraints,supply_s,dissipation,NN_descriptors,t_stencil;stencils = 0)
+
+    if constraints
+        @assert constraints == supply_s  "If you use constraints you need to supply the SGS variables"
+    end
+
+    SGS_corrector = size(t_stencil)[1] * (t_stencil' * reverse(t_stencil))[1]
+
+
+    (B,kernel_widths,channels,diagonals) = NN_descriptors
+
+    @assert size(kernel_widths)[1] == size(channels)[1] + 1 "Supply n kernel_widths and n-1 channels"
+
+    if stencils != 0
+        stencil_width = Int((size(stencils[1])[1]-1)/2)
+    end
+
+    physics_width = Int((20-size(f(ones(20),ones(20),0))[1])/2)
+    kernel_widths = [kernel_widths;]
+
+    diagonals = 0
+
+    if constraints
+        if dissipation
+            #channels = [[3]; channels; [2*diagonals*3 + 2*diagonals + 5]]
+            channels = [[3]; channels; [4]]
+        else
+            channels = [[3]; channels; [2]]
+        end
+    else
+        channels = [[3]; channels; [2]]
+    end
+
+    conv = conv_NN(2*kernel_widths .+ 1,channels,0)
+
+    conv_pad_size = sum(kernel_widths)
+
+    #B1,B2,B3 = 0,0,0
+    if stencils == 0
+        B1 = Float64.(Flux.glorot_uniform(Tuple(2*[B...] .+1)...,2,2))
+        B2 = Float64.(Flux.glorot_uniform(Tuple(2*[B...] .+1)...,2,2))
+        if dissipation
+            B3 = Float64.(Flux.glorot_uniform(Tuple(2*[B...] .+1)...,2,2))
+        else
+            B3 = 0
+        end
+    end
+
+
+
+    stencils = (B1,B2,B3)
+
+
+
+
+    BC_f = padding_wrapper(f)
+
+
+
+    model(u,s,x,as = 0,bs = 0,stencils = stencils,BC_f = BC_f,conv = conv,SGS_corrector = SGS_corrector,constraints = constraints,dissipation = dissipation,pad_sizes = (physics_width,B,conv_pad_size),supply_s = supply_s,diagonals = diagonals;channel = "all") = skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,SGS_corrector,constraints,dissipation,pad_sizes,supply_s,diagonals;channel)
+
+    return model, (conv,stencils)
+
+end
+
+
+function skew_symm_NN(u,s,x,as,bs,stencils,BC_f,conv,SGS_corrector,constraints,dissipation,pad_sizes,supply_s,diagonals;channel)
+
+    #domain_range,(I,J),(X,x),(Omega,omega),(W,R),(IP,ip),(INTEG,integ) = domain_descriptors
+
+
+    (physics_width,stencil_width,conv_pad_size) = pad_sizes
+
+    if constraints
+        conv_pad_size = conv_pad_size + stencil_width + diagonals
+    else
+        conv_pad_size += 1
+    end
+
+
+
+
+
+    pad2 = BC_f(u,x,0,as = as,bs = bs,eval_BCs = false,pad_size = conv_pad_size + physics_width)
+
+    du = pad2[conv_pad_size + 1:end - conv_pad_size,:]
+    pad1 = padding(u,conv_pad_size,as,bs)
+    #pad2 = padding(du,conv_pad_size)
+    pad3 = padding(s,conv_pad_size,as,bs,anti_symm_outflow = true,SGS_corrector = SGS_corrector)
+
+
+
+    if supply_s
+        pads = [pad1;pad2;pad3]
+    else
+        pads = [pad1;pad2; 0 .* pad3]
+    end
+
+    pads = reshape(pads,(size(pad1)[1],3,size(pad1)[2]))
+
+
+    p = conv(pads)
+
+
+    if constraints
+        (B1,B2,B3) = stencils
+
+        k = p[:,1:2,:]
+
+
+
+        if dissipation
+            q = p[:,3:4,:]
+            #dTd = sum( d.^2 ,dims = [i for i in 1:dims])
+        else
+            q = 0
+        end
+
+
+
+
+        pad_u = padding(u,2*stencil_width + diagonals,as,bs)
+        pad_s = padding(s,2*stencil_width + diagonals,0*as,0*bs,anti_symm_outflow = true,SGS_corrector = SGS_corrector)
+
+        pads = [pad_u ;pad_s]
+
+        a = reshape(pads,(size(pad_u)[1],2,size(pad_u)[2]))
+
+
+        B1 = cons_mom_B(B1)
+        B2 = cons_mom_B(B2)
+        B3 = cons_mom_B(B3)
+
+
+        B1_T = transpose_B(B1)
+
+        B2_T = transpose_B(B2)
+        B3_T = transpose_B(B3)
+
+
+
+
+        cons = NNlib.conv(NNlib.conv(a,B1) .* k,B2_T) - NNlib.conv(NNlib.conv(a,B2) .* k,B1_T)
+        if dissipation
+            diss =  -NNlib.conv(q.^2 .* NNlib.conv(a,B3),B3_T)
+        else
+            diss = 0*cons
+        end
+
+
+        cons_u = cons[:,1,:]
+        cons_s = cons[:,2,:]
+        diss_u = diss[:,1,:]
+        diss_s = diss[:,2,:]
+
+        pu = cons_u + diss_u
+        ps = cons_s + diss_s
+
+    else
+        pu = 1/(x[2]-x[1])* (circshift(p[:,1,:],(-1,0)) .- p[:,1,:])[2:end-1,:] #.*sp_mat_mul(p[:,1,:],[0,-1,1])
+        if supply_s
+            ps = p[:,2,:][2:end-1,:]
+        else
+            ps = 0*pu
+        end
+    end
+
+
+
+    pu = pu .+ du
+    if channel == "all"
+        return pu,ps
+    elseif channel == "conservative"
+        return cons_u,cons_s
+    elseif channel == "dissipative"
+        return diss_u,diss_s
+    elseif channel == "exchange"
+        return ex_u,ex_s
+    elseif channel == "physics"
+        return du,0*du
+    elseif channel == "closure"
+        return pu .- du,ps
+    else
+        return 0*pu,0*ps
+    end
+end
+
+function cons_mom_B(B_kernel;channel = 1)
+    if B_kernel != 0
+        dims = length(size(B_kernel))-2
+        channel_mask = gen_channel_mask(B_kernel,channel)
+
+        means = mean(B_kernel,dims = collect(1:dims))
+        return B_kernel .- means .* channel_mask
+    else
+        return 0
+    end
+end
+
+function transpose_B(B_kernel)
+    if B_kernel != 0
+        dims = length(size(B_kernel))-2
+        original_dims = stop_gradient() do
+           collect(1:dims+2)
+        end
+        permuted_dims = stop_gradient() do
+           copy(original_dims)
+        end
+
+        stop_gradient() do
+            permuted_dims[dims+1] = original_dims[dims+2]
+            permuted_dims[dims+2] = original_dims[dims+1]
+        end
+
+        T_B_kernel = permutedims(B_kernel,permuted_dims)
+
+        for i in 1:dims
+           T_B_kernel = reverse(T_B_kernel,dims = i)
+
+        end
+
+        return T_B_kernel
+    else
+        return 0
+    end
+end
+
+function gen_channel_mask(data,channel)
+    dims = length(size(data)) - 2
+    number_of_channels = size(data)[end-1]
+    channel_mask = stop_gradient() do
+        zeros(size(data)[1:end-1])
+    end
+    stop_gradient() do
+        channel_mask[[(:) for i in 1:dims]...,channel] .+= 1
+    end
+    return channel_mask
 end
