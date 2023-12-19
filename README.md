@@ -28,13 +28,13 @@ architecture displays superior stability properties when compared to a vanilla c
 
 ## Required Julia (v1.9.3) packages
 
-Plots
-JLD
-LaTeXStrings
-ProgressBars
-LinearAlgebra
-SparseArrays
-Random
-Distributions
-Flux
-Zygote
+- Plots
+- JLD
+- LaTeXStrings
+- ProgressBars
+- LinearAlgebra
+- SparseArrays
+- Random
+- Distributions
+- Flux
+- Zygote
