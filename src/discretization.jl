@@ -1,6 +1,3 @@
-using LinearAlgebra
-using SparseArrays
-using Random
 using Distributions
 include("methods.jl")
 

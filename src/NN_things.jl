@@ -1,4 +1,3 @@
-using LinearAlgebra
 using Flux
 include("methods.jl")
 

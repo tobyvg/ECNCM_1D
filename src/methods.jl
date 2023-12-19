@@ -1,7 +1,6 @@
 using LinearAlgebra
 using SparseArrays
 using Random
-using CSV,Tables
 
 function construct_weighted_interpolation_matrix(x1,x2)
     @assert x1[1] <= x2[1] && x1[end] >= x2[end]
@@ -48,24 +47,6 @@ function process_path(path)
     return path
 end
 
-
-
-function save_heatmap_data(path,x,y,z)
-    path = process_path(path)
-    mkpath(path)
-    CSV.write(path * "x.csv",Tables.table(x))
-    CSV.write(path * "y.csv",Tables.table(y))
-    CSV.write(path * "z.csv",Tables.table(z))
-    return 0
-end
-
-function import_heatmap_data(path)
-    path = process_path(path)
-    x = CSV.File(path * "x.csv") |> Tables.matrix
-    y = CSV.File(path * "y.csv") |> Tables.matrix
-    z = CSV.File(path * "z.csv") |> Tables.matrix
-    return x[:,1],y[:,1],z
-end
 
 function cut_indexes(d,fraction;randomize = false,uniform = true)
     d_size = size(d)[end]
