@@ -82,7 +82,7 @@ function trajectory_loss_function(us,ss,as,bs,Fs,domain_descriptors,model,traj_d
         return l1  + l2
     else
         return l1
-    end #+ 1/3*emb_l3# + emb_l2 + emb_l3 #l1 + l3 + l4
+    end
 
 end
 
@@ -193,57 +193,8 @@ function padding(vec,pad_size,a = 0, b = 0;anti_symm_outflow = false, SGS_correc
     return [front; vec ; back]
 end
 
-function subgrid_gradients(u_prime,du_prime,domain_descriptors,subgrid_filter)
-    domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
-    function extract_jacobian(u_prime,subgrid_filter = subgrid_filter,I=I,J=J)
-        jac = jacobian(subgrid_filter,u_prime)[1]
-        flat_jac = zeros(I*J)
-        for i in 1:I
-            for j in 1:J
-                flat_jac[j + (i-1)*J] += jac[i,j + (i-1)*J]
-            end
-        end
-        return flat_jac
-    end
-    full_jac = zeros(I,size(u_prime)[2])
-
-    for i in 1:size(u_prime)[2]
-        full_jac[:,i] .+= R'*(extract_jacobian(u_prime[:,i]) .* du_prime[:,i])
-    end
-    return full_jac
-end
 
 
-function gen_NN_subgrid_filter(layers,domain_descriptors,outflow = false)
-     domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
-     NN = NeuralNetwork(layers,bias = false, activation_function = tanh)
-     select_mat = gen_subgrid_filter_select_mat(domain_descriptors)
-     Px = stop_gradient() do
-            reverse(Matrix{Float64}(LinearAlgebra.I, J, J),dims = 2)
-     end
-     function subgrid_filter(u_primes,NN = NN, select_mat = select_mat,domain_descriptors = domain_descriptors,Px = Px,outflow = outflow)
-        domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
-
-        f1 = vcat([NN(u_primes[select_mat[:,i],:]) for i in 1:size(select_mat)[2]]...)
-        f2 = vcat([NN(Px*u_primes[select_mat[:,i],:]) for i in 1:size(select_mat)[2]]...)
-        filtered = f1 .- f2
-        return filtered
-    end
-    return subgrid_filter,NN
-end
-
-
-function NeuralNetwork(layers;bias = true,activation_function = relu)
-    storage = []
-    for i in 1:size(layers)[1]-1
-        if i == size(layers)[1]-1
-            storage = [storage; Dense(layers[i],layers[i+1],bias = bias)]
-        else
-            storage = [storage; Dense(layers[i],layers[i+1],activation_function,bias = bias)]
-        end
-    end
-    return Chain((i for i in storage)...)
-end
 
 function conv_NN(sizes,channels,strides = 0,bias = true)
     if strides == 0
@@ -261,57 +212,8 @@ function conv_NN(sizes,channels,strides = 0,bias = true)
 end
 
 
-function gen_subgrid_filter_select_mat(domain_descriptors)
-    domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
-    selects = reshape(collect(1:size(x)[1]),(J,I))
-    return selects
-end
 
-function gen_t_stencil(params,domain_descriptors,outflow)
-    domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
-    if outflow
-        lambda = 0.
-        t_tilde = params
-        Px = stop_gradient() do
-            reverse(Matrix{Float64}(LinearAlgebra.I, size(t_tilde)[1], size(t_tilde)[1]),dims = 2)
-        end
-        I_mat = stop_gradient() do
-            Matrix{Float64}(LinearAlgebra.I,  size(t_tilde)[1], size(t_tilde)[1])
-        end
-        t_vec = (I_mat - Px)*t_tilde .+ 1/2*lambda
-    else
-        t_vec = params
-    end
-    return t_vec
-
-end
-
-
-function gen_subgrid_filter(domain_descriptors,outflow = false)
-     domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
-     params = zeros(J) .+ rand(Uniform(-10^(-20),10^(-20)),J)
-     select_mat = gen_subgrid_filter_select_mat(domain_descriptors)
-     function subgrid_filter(u_primes,params = params, select_mat = select_mat,domain_descriptors = domain_descriptors,outflow = outflow)
-        t_vec = gen_t_stencil(params,domain_descriptors,outflow)
-        filtered = vcat([t_vec' *u_primes[select_mat[:,i],:] for i in 1:size(select_mat)[2]]...)
-        return filtered
-    end
-    return subgrid_filter,params
-end
     #bar = gen_S_and_K(subgrid_filter_stencil,"just_avg")
-
-function subgrid_filter_loss(u_primes,subgrid_filter,domain_descriptors)
-    domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
-
-    filtered = subgrid_filter(u_primes)
-    filtered_squared = 1/2*(filtered).^2
-
-    target = W*(1/2*u_primes.^2)
-    l1 = Flux.Losses.mse(filtered_squared ,target)
-
-
-    return  l1
-end
 
 function gen_T(subgrid_filter_stencil,domain_descriptors)
     domain_range,interpolation_matrix,(N,I,J),(X,x,ref_x),(Omega,omega,ref_omega),(W,R),(IP,ip,ref_ip),(INTEG,integ,ref_integ) = domain_descriptors
@@ -416,7 +318,7 @@ function import_model(path,f)
 
     t_stencil = load(path * "T.jld")["t_stencil"]
 
-    constraints,supply_s,dissipation,NN_descriptors,stencils,weight_bias = (load(path * "model.jld")[i] for i in ("constraints","supply_s","dissipation","NN_descriptors","stencils","weight_bias"))
+    constraints,supply_s,dissipation,NN_descriptors,stencils,weight_bias,stencils = (load(path * "model.jld")[i] for i in ("constraints","supply_s","dissipation","NN_descriptors","stencils","weight_bias","stencils"))
     model, (conv,stencils) = gen_model(f, constraints,supply_s,dissipation,NN_descriptors,t_stencil,stencils = stencils)
 
     for i in 1:length(conv)
@@ -482,6 +384,8 @@ function gen_model(f,constraints,supply_s,dissipation,NN_descriptors,t_stencil;s
         else
             B3 = 0
         end
+    else
+        B1,B2,B3 = stencils
     end
 
 

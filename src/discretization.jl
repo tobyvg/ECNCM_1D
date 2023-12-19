@@ -5,35 +5,6 @@ using Distributions
 include("methods.jl")
 
 
-function gen_stencil(N,coeffs,positions)
-    mat = spzeros((N,N))
-    stencil_width = size(coeffs)[1]
-    for i in 1:N
-        for j in 1:stencil_width
-            mat[i,index_converter(i+positions[j],N)] = coeffs[j]
-        end
-    end
-    return mat
-end
-
-function gen_D1(x)
-    dx = x[2]-x[1]
-    N = size(x)[1]
-    return 1/(2*dx)*gen_stencil(N,[-1.,0.,1.],[-1,0,1])
-end
-
-function gen_D2(x)
-    dx = x[2]-x[1]
-    N = size(x)[1]
-    return 1/(dx^2)*gen_stencil(N,[1.,-2.,1.],[-1,0,1])
-end
-
-
-function gen_D3(x)
-    dx = x[2]-x[1]
-    N = size(x)[1]
-    return 1/(2*dx^3)*gen_stencil(N,[-1.,2.,-2.,1.],[-2,-1,1,2])
-end
 
 
 function generate_domain_and_filters(b,I,N;spectral = false)
@@ -411,6 +382,7 @@ function padding_wrapper(f;pad_size=NaN,eval_BCs = false,as = 0 ,bs = 0)
             pad_u = padding(u,pad_size,eval_a,eval_b)
 
         else
+
             pad_u = padding(u,pad_size,as,bs)
 
         end

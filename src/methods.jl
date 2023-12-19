@@ -90,9 +90,3 @@ function cut_indexes(d,fraction;randomize = false,uniform = true)
     end
     return indexes
 end
-
-
-
-function adj_flatten(x)
-    return reshape(x,(prod(size(x)),))
-end
