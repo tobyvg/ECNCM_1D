@@ -28,8 +28,8 @@ architecture displays superior stability properties when compared to a vanilla c
 
 ## Required Julia (v1.9.3) packages
 
-- Plots
-- JLD
+* Plots
+* JLD
 - LaTeXStrings
 - ProgressBars
 - LinearAlgebra
