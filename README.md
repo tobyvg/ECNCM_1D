@@ -38,3 +38,5 @@ architecture displays superior stability properties when compared to a vanilla c
 - Distributions
 - Flux
 - Zygote
+
+The tutorial.ipynb can be run using Jupyter Notebook.
