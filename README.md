@@ -25,3 +25,16 @@ systems (e.g. viscous flows), the framework is extended with a diffusive compone
 network architecture is constructed such that it also satisfies momentum conservation. We apply the new
 methodology to both the viscous Burgers’ equation and the Korteweg-De Vries equation in 1D. The novel
 architecture displays superior stability properties when compared to a vanilla convolutional neural network.
+
+## Required Julia (v1.9.3) packages
+
+Plots
+JLD
+LaTeXStrings
+ProgressBars
+LinearAlgebra
+SparseArrays
+Random
+Distributions
+Flux
+Zygote
