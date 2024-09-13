@@ -39,4 +39,4 @@ architecture displays superior stability properties when compared to a vanilla c
 - Flux
 - Zygote
 
-The Tutorial.ipynb can be run using Jupyter Notebook.
+The Tutorial.ipynb can be run using Jupyter Notebook. Corresponding paper can be found at https://arxiv.org/abs/2301.13770.
